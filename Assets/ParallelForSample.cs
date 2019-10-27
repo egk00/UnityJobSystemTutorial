@@ -5,10 +5,9 @@ using Unity.Mathematics;
 using Unity.Jobs;
 using Unity.Collections;
 using Unity.Burst;
-// IJobParallelForTransform을 구현하기 위해 선언
-using UnityEngine.Jobs;
+using UnityEngine.SceneManagement;
 
-public class IJobParallelForSample : MonoBehaviour
+public class ParallelForSample : MonoBehaviour
 {
     [SerializeField] private bool useJobs;
     [SerializeField] private Transform sphereTransform;
@@ -23,7 +22,7 @@ public class IJobParallelForSample : MonoBehaviour
     private void Start()
     {
         sphereList = new List<SphereT>();
-        for(int i=0; i<1000; i++)
+        for (int i = 0; i < 1000; i++)
         {
             Transform zombieTransform = Instantiate(sphereTransform,
                 new Vector3(UnityEngine.Random.Range(-8f, 8f), UnityEngine.Random.Range(-5f, 5f)),
@@ -43,35 +42,36 @@ public class IJobParallelForSample : MonoBehaviour
 
         if (useJobs)
         {
+            NativeArray<float3> positionArray = new NativeArray<float3>(sphereList.Count, Allocator.TempJob);
             NativeArray<float> moveYArray = new NativeArray<float>(sphereList.Count, Allocator.TempJob);
-            TransformAccessArray transformAccessArray = new TransformAccessArray(sphereList.Count);
 
             // List 내 위치와 moveY 저장
-            for(int i=0; i < sphereList.Count; i++)
+            for (int i = 0; i < sphereList.Count; i++)
             {
-                //positionArray[i] = sphereList[i].transform.position;
+                positionArray[i] = sphereList[i].transform.position;
                 moveYArray[i] = sphereList[i].moveY;
-                transformAccessArray.Add(sphereList[i].transform);
-                
             }
-
-            ReallyToughParalleJobTransform reallyToughParalleJobTransform = new ReallyToughParalleJobTransform
+            ReallyToughParallelJob reallyToughParallelJob = new ReallyToughParallelJob
             {
                 deltaTime = Time.deltaTime,
+                positionArray = positionArray,
                 moveYArray = moveYArray,
             };
 
-            JobHandle jobHandle = reallyToughParalleJobTransform.Schedule(transformAccessArray);
+            JobHandle jobHandle = reallyToughParallelJob.Schedule(sphereList.Count, 100);
+            // 모든 스레드의 job이 완료될 때 까지 기다림
             jobHandle.Complete();
 
-            for(int i =0; i < sphereList.Count; i++)
+            for (int i = 0; i < sphereList.Count; i++)
             {
+                sphereList[i].transform.position = positionArray[i];
                 sphereList[i].moveY = moveYArray[i];
             }
-            
+
+            positionArray.Dispose();
             moveYArray.Dispose();
-            transformAccessArray.Dispose();
-        } 
+
+        }
         else
         {
             foreach (SphereT sphere in sphereList)
@@ -98,21 +98,22 @@ public class IJobParallelForSample : MonoBehaviour
     }
 }
 
-[BurstCompile]
-public struct ReallyToughParalleJobTransform : IJobParallelForTransform
+// 병렬 작업
+public struct ReallyToughParallelJob : IJobParallelFor
 {
+    public NativeArray<float3> positionArray;
     public NativeArray<float> moveYArray;
     [ReadOnly] public float deltaTime;
 
-    public void Execute(int index, TransformAccess transform)
+    public void Execute(int index)
     {
-        transform.position += new Vector3(0f, moveYArray[index] * deltaTime, 0f);
+        positionArray[index] += new float3(0f, moveYArray[index] * deltaTime, 0f);
 
-        if (transform.position.y > 5f)
+        if (positionArray[index].y > 5f)
         {
             moveYArray[index] = -math.abs(moveYArray[index]);
         }
-        if (transform.position.y < -5f)
+        if (positionArray[index].y < -5f)
         {
             moveYArray[index] = +math.abs(moveYArray[index]);
         }
@@ -123,4 +124,3 @@ public struct ReallyToughParalleJobTransform : IJobParallelForTransform
         }
     }
 }
-
